@@ -665,6 +665,23 @@ S:	Maintained
 F:	drivers/net/appletalk/
 F:	net/appletalk/
 
+APPLIEDMICRO (APM) X-GENE SOC QUEUE MANAGER/TRAFFIC MANAGER (QMTM) DRIVER
+M:	Ravi Patel <rapatel@apm.com>
+M:	Keyur Chudgar <kchudgar@apm.com>
+S:	Maintained
+F:	drivers/misc/xgene/
+F:	include/misc/xgene/xgene_qmtm.h
+F:	Documentation/devicetree/bindings/misc/apm-xgene-qmtm.txt
+F:	Documentation/misc-devices/apm-xgene-qmtm
+
+APPLIEDMICRO (APM) X-GENE SOC ETHERNET DRIVER
+M:	Keyur Chudgar <kchudgar@apm.com>
+M:	Iyappan Subramanian <isubramanian@apm.com>
+M:	Ravi Patel <rapatel@apm.com>
+S:	Maintained
+F:	drivers/net/ethernet/apm/
+F:	Documentation/devicetree/bindings/net/apm-xgene-enet.txt
+
 APTINA CAMERA SENSOR PLL
 M:	Laurent Pinchart <Laurent.pinchart@ideasonboard.com>
 L:	linux-media@vger.kernel.org
@@ -2157,6 +2174,11 @@ M:	Neel Patel <neepatel@cisco.com>
 M:	Nishank Trivedi <nistrive@cisco.com>
 S:	Supported
 F:	drivers/net/ethernet/cisco/enic/
+
+CISCO VIC LOW LATENCY NIC DRIVER
+M:      Upinder Malhi <umalhi@cisco.com>
+S:      Supported
+F:      drivers/infiniband/hw/usnic
 
 CIRRUS LOGIC EP93XX ETHERNET DRIVER
 M:	Hartley Sweeten <hsweeten@visionengravers.com>
@@ -6345,6 +6367,13 @@ F:	drivers/scsi/osd/
 F:	include/scsi/osd_*
 F:	fs/exofs/
 
+OVERLAYFS FILESYSTEM
+M:	Miklos Szeredi <miklos@szeredi.hu>
+L:	linux-fsdevel@vger.kernel.org
+S:	Supported
+F:	fs/overlayfs/*
+F:	Documentation/filesystems/overlayfs.txt
+
 P54 WIRELESS DRIVER
 M:	Christian Lamparter <chunkeey@googlemail.com>
 L:	linux-wireless@vger.kernel.org
@@ -6532,6 +6561,13 @@ M:	Jingoo Han <jg1.han@samsung.com>
 L:	linux-pci@vger.kernel.org
 S:	Maintained
 F:	drivers/pci/host/*designware*
+
+PCI DRIVER FOR APPLIEDMICRO XGENE
+M:	Tanmay Inamdar <tinamdar@apm.com>
+L:	linux-pci@vger.kernel.org
+L:	linux-arm-kernel@lists.infradead.org
+S:	Maintained
+F:	drivers/pci/host/pci-xgene.c
 
 PCMCIA SUBSYSTEM
 P:	Linux PCMCIA Team

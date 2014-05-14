@@ -179,7 +179,7 @@ int iwl_mvm_mac_setup_register(struct iwl_mvm *mvm)
 	    !iwlwifi_mod_params.sw_crypto)
 		hw->flags |= IEEE80211_HW_MFP_CAPABLE;
 
-	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_UAPSD_SUPPORT) {
+	if (0 && mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_UAPSD_SUPPORT) {
 		hw->flags |= IEEE80211_HW_SUPPORTS_UAPSD;
 		hw->uapsd_queues = IWL_UAPSD_AC_INFO;
 		hw->uapsd_max_sp_len = IWL_UAPSD_MAX_SP;
@@ -415,6 +415,14 @@ static void iwl_mvm_cleanup_iterator(void *data, u8 *mac,
 
 static void iwl_mvm_restart_cleanup(struct iwl_mvm *mvm)
 {
+#ifdef CONFIG_IWLWIFI_DEBUGFS
+	static char *env[] = { "DRIVER=iwlwifi", "EVENT=error_dump", NULL };
+
+	/* notify the userspace about the error we had */
+	if (iwl_mvm_fw_error_dump(mvm))
+		kobject_uevent_env(&mvm->hw->wiphy->dev.kobj, KOBJ_CHANGE, env);
+#endif
+
 	iwl_trans_stop_device(mvm->trans);
 	iwl_trans_stop_hw(mvm->trans, false);
 

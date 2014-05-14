@@ -68,6 +68,7 @@
 #include <linux/spinlock.h>
 #include <linux/leds.h>
 #include <linux/in6.h>
+#include <linux/vmalloc.h>
 
 #include "iwl-op-mode.h"
 #include "iwl-trans.h"
@@ -517,6 +518,9 @@ struct iwl_mvm {
 
 	/* -1 for always, 0 for never, >0 for that many times */
 	s8 restart_fw;
+	void *fw_error_dump;
+	void *fw_error_sram;
+	u32 fw_error_sram_len;
 
 	struct led_classdev led;
 
@@ -600,7 +604,10 @@ void iwl_mvm_hwrate_to_tx_rate(u32 rate_n_flags,
 			       struct ieee80211_tx_rate *r);
 u8 iwl_mvm_mac80211_idx_to_hwrate(int rate_idx);
 void iwl_mvm_dump_nic_error_log(struct iwl_mvm *mvm);
-void iwl_mvm_dump_sram(struct iwl_mvm *mvm);
+#ifdef CONFIG_IWLWIFI_DEBUGFS
+bool iwl_mvm_fw_error_dump(struct iwl_mvm *mvm);
+void iwl_mvm_fw_error_sram_dump(struct iwl_mvm *mvm);
+#endif
 u8 first_antenna(u8 mask);
 u8 iwl_mvm_next_antenna(struct iwl_mvm *mvm, u8 valid, u8 last_idx);
 

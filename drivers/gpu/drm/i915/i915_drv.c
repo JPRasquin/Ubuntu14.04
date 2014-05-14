@@ -385,9 +385,7 @@ static const struct intel_device_info intel_broadwell_m_info = {
 	INTEL_HSW_D_IDS(&intel_haswell_d_info), \
 	INTEL_HSW_M_IDS(&intel_haswell_m_info), \
 	INTEL_VLV_M_IDS(&intel_valleyview_m_info),	\
-	INTEL_VLV_D_IDS(&intel_valleyview_d_info),	\
-	INTEL_BDW_M_IDS(&intel_broadwell_m_info),	\
-	INTEL_BDW_D_IDS(&intel_broadwell_d_info)
+	INTEL_VLV_D_IDS(&intel_valleyview_d_info)
 
 static const struct pci_device_id pciidlist[] = {		/* aka */
 	INTEL_PCI_IDS,
@@ -1019,8 +1017,13 @@ static int __init i915_init(void)
 		driver.driver_features &= ~DRIVER_MODESET;
 #endif
 
-	if (!(driver.driver_features & DRIVER_MODESET))
+	if (!(driver.driver_features & DRIVER_MODESET)) {
 		driver.get_vblank_timestamp = NULL;
+#ifndef CONFIG_DRM_I915_UMS
+		/* Silently fail loading to not upset userspace. */
+		return 0;
+#endif
+	}
 
 	return drm_pci_init(&driver, &i915_pci_driver);
 }

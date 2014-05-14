@@ -720,7 +720,7 @@ int ping_v4_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	sock_tx_timestamp(sk, &ipc.tx_flags);
 
 	if (msg->msg_controllen) {
-		err = ip_cmsg_send(sock_net(sk), msg, &ipc);
+		err = ip_cmsg_send(sock_net(sk), msg, &ipc, false);
 		if (err)
 			return err;
 		if (ipc.opt)
@@ -903,7 +903,12 @@ int ping_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		}
 
 		if (inet6_sk(sk)->rxopt.all)
-			pingv6_ops.ip6_datagram_recv_ctl(sk, msg, skb);
+			pingv6_ops.ip6_datagram_recv_common_ctl(sk, msg, skb);
+		if (skb->protocol == htons(ETH_P_IPV6) &&
+		    inet6_sk(sk)->rxopt.all)
+			pingv6_ops.ip6_datagram_recv_specific_ctl(sk, msg, skb);
+		else if (skb->protocol == htons(ETH_P_IP) && isk->cmsg_flags)
+			ip_cmsg_recv(msg, skb);
 #endif
 	} else {
 		BUG();

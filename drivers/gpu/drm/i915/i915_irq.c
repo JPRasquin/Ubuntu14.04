@@ -674,7 +674,8 @@ static bool intel_pipe_in_vblank_locked(struct drm_device *dev, enum pipe pipe)
 }
 
 static int i915_get_crtc_scanoutpos(struct drm_device *dev, int pipe,
-			     int *vpos, int *hpos, ktime_t *stime, ktime_t *etime)
+				    unsigned int flags, int *vpos, int *hpos,
+				    ktime_t *stime, ktime_t *etime)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct drm_crtc *crtc = dev_priv->pipe_to_crtc_mapping[pipe];
@@ -808,7 +809,8 @@ static int i915_get_vblank_timestamp(struct drm_device *dev, int pipe,
 	/* Helper routine in DRM core does all the work: */
 	return drm_calc_vbltimestamp_from_scanoutpos(dev, pipe, max_error,
 						     vblank_time, flags,
-						     crtc);
+						     crtc,
+						     &to_intel_crtc(crtc)->config.adjusted_mode);
 }
 
 static bool intel_hpd_irq_event(struct drm_device *dev,
@@ -1992,7 +1994,7 @@ static void i915_error_work_func(struct work_struct *work)
 			kobject_uevent_env(&dev->primary->kdev->kobj,
 					   KOBJ_CHANGE, reset_done_event);
 		} else {
-			atomic_set(&error->reset_counter, I915_WEDGED);
+			atomic_set_mask(I915_WEDGED, &error->reset_counter);
 		}
 
 		/*

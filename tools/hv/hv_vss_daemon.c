@@ -88,6 +88,8 @@ static int vss_operate(int operation)
 			continue;
 		if (strcmp(ent->mnt_type, "iso9660") == 0)
 			continue;
+		if (strcmp(ent->mnt_type, "vfat") == 0)
+			continue;
 		if (strcmp(ent->mnt_dir, "/") == 0) {
 			root_seen = 1;
 			continue;
@@ -143,8 +145,10 @@ int main(void)
 	char *vss_recv_buffer;
 	size_t vss_recv_buffer_len;
 
+#if 0   /* It's much easier to manage from upstart if we don't fork */
 	if (daemon(1, 0))
 		return 1;
+#endif
 
 	openlog("Hyper-V VSS", 0, LOG_USER);
 	syslog(LOG_INFO, "VSS starting; pid is:%d", getpid());

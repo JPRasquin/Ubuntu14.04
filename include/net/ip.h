@@ -63,6 +63,7 @@ struct ipcm_cookie {
 };
 
 #define IPCB(skb) ((struct inet_skb_parm*)((skb)->cb))
+#define PKTINFO_SKB_CB(skb) ((struct in_pktinfo *)((skb)->cb))
 
 struct ip_ra_chain {
 	struct ip_ra_chain __rcu *next;
@@ -461,7 +462,8 @@ int ip_options_rcv_srr(struct sk_buff *skb);
 
 void ipv4_pktinfo_prepare(const struct sock *sk, struct sk_buff *skb);
 void ip_cmsg_recv(struct msghdr *msg, struct sk_buff *skb);
-int ip_cmsg_send(struct net *net, struct msghdr *msg, struct ipcm_cookie *ipc);
+int ip_cmsg_send(struct net *net, struct msghdr *msg,
+		 struct ipcm_cookie *ipc, bool allow_ipv6);
 int ip_setsockopt(struct sock *sk, int level, int optname, char __user *optval,
 		  unsigned int optlen);
 int ip_getsockopt(struct sock *sk, int level, int optname, char __user *optval,

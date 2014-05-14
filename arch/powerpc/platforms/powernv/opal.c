@@ -18,9 +18,12 @@
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/kobject.h>
+#include <linux/memblock.h>
 #include <asm/opal.h>
 #include <asm/firmware.h>
+#include <asm/mce.h>
 
 #include "powernv.h"
 
@@ -30,7 +33,17 @@ struct kobject *opal_kobj;
 struct opal {
 	u64 base;
 	u64 entry;
+	u64 size;
 } opal;
+
+struct mcheck_recoverable_range {
+	u64 start_addr;
+	u64 end_addr;
+	u64 recover_addr;
+};
+
+static struct mcheck_recoverable_range *mc_recoverable_range;
+static int mc_recoverable_range_len;
 
 static struct device_node *opal_node;
 static DEFINE_SPINLOCK(opal_write_lock);
@@ -42,28 +55,47 @@ static DEFINE_SPINLOCK(opal_notifier_lock);
 static uint64_t last_notified_mask = 0x0ul;
 static atomic_t opal_notifier_hold = ATOMIC_INIT(0);
 
+static void opal_reinit_cores(void)
+{
+	/* Do the actual re-init, This will clobber all FPRs, VRs, etc...
+	 *
+	 * It will preserve non volatile GPRs and HSPRG0/1. It will
+	 * also restore HIDs and other SPRs to their original value
+	 * but it might clobber a bunch.
+	 */
+#ifdef __BIG_ENDIAN__
+	opal_reinit_cpus(OPAL_REINIT_CPUS_HILE_BE);
+#else
+	opal_reinit_cpus(OPAL_REINIT_CPUS_HILE_LE);
+#endif
+}	
+
 int __init early_init_dt_scan_opal(unsigned long node,
 				   const char *uname, int depth, void *data)
 {
-	const void *basep, *entryp;
-	unsigned long basesz, entrysz;
+	const void *basep, *entryp, *sizep;
+	unsigned long basesz, entrysz, runtimesz;
 
 	if (depth != 1 || strcmp(uname, "ibm,opal") != 0)
 		return 0;
 
 	basep  = of_get_flat_dt_prop(node, "opal-base-address", &basesz);
 	entryp = of_get_flat_dt_prop(node, "opal-entry-address", &entrysz);
+	sizep = of_get_flat_dt_prop(node, "opal-runtime-size", &runtimesz);
 
-	if (!basep || !entryp)
+	if (!basep || !entryp || !sizep)
 		return 1;
 
 	opal.base = of_read_number(basep, basesz/4);
 	opal.entry = of_read_number(entryp, entrysz/4);
+	opal.size = of_read_number(sizep, runtimesz/4);
 
 	pr_debug("OPAL Base  = 0x%llx (basep=%p basesz=%ld)\n",
 		 opal.base, basep, basesz);
 	pr_debug("OPAL Entry = 0x%llx (entryp=%p basesz=%ld)\n",
 		 opal.entry, entryp, entrysz);
+	pr_debug("OPAL Entry = 0x%llx (sizep=%p runtimesz=%ld)\n",
+		 opal.size, sizep, runtimesz);
 
 	powerpc_firmware_features |= FW_FEATURE_OPAL;
 	if (of_flat_dt_is_compatible(node, "ibm,opal-v3")) {
@@ -77,6 +109,72 @@ int __init early_init_dt_scan_opal(unsigned long node,
 		printk("OPAL V1 detected !\n");
 	}
 
+	/* Reinit all cores with the right endian */
+	opal_reinit_cores();
+
+	/* Restore some bits */
+	if (cur_cpu_spec->cpu_restore)
+		cur_cpu_spec->cpu_restore();
+
+	return 1;
+}
+
+int __init early_init_dt_scan_recoverable_ranges(unsigned long node,
+				   const char *uname, int depth, void *data)
+{
+	unsigned long i, psize, size;
+	const __be32 *prop;
+
+	if (depth != 1 || strcmp(uname, "ibm,opal") != 0)
+		return 0;
+
+	prop = of_get_flat_dt_prop(node, "mcheck-recoverable-ranges", &psize);
+
+	if (!prop)
+		return 1;
+
+	pr_debug("Found machine check recoverable ranges.\n");
+
+	/*
+	 * Calculate number of available entries.
+	 *
+	 * Each recoverable address range entry is (start address, len,
+	 * recovery address), 2 cells each for start and recovery address,
+	 * 1 cell for len, totalling 5 cells per entry.
+	 */
+	mc_recoverable_range_len = psize / (sizeof(*prop) * 5);
+
+	/* Sanity check */
+	if (!mc_recoverable_range_len)
+		return 1;
+
+	/* Size required to hold all the entries. */
+	size = mc_recoverable_range_len *
+			sizeof(struct mcheck_recoverable_range);
+
+	/*
+	 * Allocate a buffer to hold the MC recoverable ranges. We would be
+	 * accessing them in real mode, hence it needs to be within
+	 * RMO region.
+	 */
+	mc_recoverable_range =__va(memblock_alloc_base(size, __alignof__(u64),
+							ppc64_rma_size));
+	memset(mc_recoverable_range, 0, size);
+
+	for (i = 0; i < mc_recoverable_range_len; i++) {
+		mc_recoverable_range[i].start_addr =
+					of_read_number(prop + (i * 5) + 0, 2);
+		mc_recoverable_range[i].end_addr =
+					mc_recoverable_range[i].start_addr +
+					of_read_number(prop + (i * 5) + 2, 1);
+		mc_recoverable_range[i].recover_addr =
+					of_read_number(prop + (i * 5) + 3, 2);
+
+		pr_debug("Machine check recoverable range: %llx..%llx: %llx\n",
+				mc_recoverable_range[i].start_addr,
+				mc_recoverable_range[i].end_addr,
+				mc_recoverable_range[i].recover_addr);
+	}
 	return 1;
 }
 
@@ -88,14 +186,10 @@ static int __init opal_register_exception_handlers(void)
 	if (!(powerpc_firmware_features & FW_FEATURE_OPAL))
 		return -ENODEV;
 
-	/* Hookup some exception handlers. We use the fwnmi area at 0x7000
-	 * to provide the glue space to OPAL
+	/* Hookup some exception handlers except machine check. We use the
+	 * fwnmi area at 0x7000 to provide the glue space to OPAL
 	 */
 	glue = 0x7000;
-	opal_register_exception_handler(OPAL_MACHINE_CHECK_HANDLER,
-					__pa(opal_mc_secondary_handler[0]),
-					glue);
-	glue += 128;
 	opal_register_exception_handler(OPAL_HYPERVISOR_MAINTENANCE_HANDLER,
 					0, glue);
 	glue += 128;
@@ -254,119 +348,94 @@ int opal_put_chars(uint32_t vtermno, const char *data, int total_len)
 	return written;
 }
 
+static int opal_recover_mce(struct pt_regs *regs,
+					struct machine_check_event *evt)
+{
+	int recovered = 0;
+	uint64_t ea = get_mce_fault_addr(evt);
+
+	if (!(regs->msr & MSR_RI)) {
+		/* If MSR_RI isn't set, we cannot recover */
+		recovered = 0;
+	} else if (evt->disposition == MCE_DISPOSITION_RECOVERED) {
+		/* Platform corrected itself */
+		recovered = 1;
+	} else if (ea && !is_kernel_addr(ea)) {
+		/*
+		 * Faulting address is not in kernel text. We should be fine.
+		 * We need to find which process uses this address.
+		 * For now, kill the task if we have received exception when
+		 * in userspace.
+		 *
+		 * TODO: Queue up this address for hwpoisioning later.
+		 */
+		if (user_mode(regs) && !is_global_init(current)) {
+			_exception(SIGBUS, regs, BUS_MCEERR_AR, regs->nip);
+			recovered = 1;
+		} else
+			recovered = 0;
+	} else if (user_mode(regs) && !is_global_init(current) &&
+		evt->severity == MCE_SEV_ERROR_SYNC) {
+		/*
+		 * If we have received a synchronous error when in userspace
+		 * kill the task.
+		 */
+		_exception(SIGBUS, regs, BUS_MCEERR_AR, regs->nip);
+		recovered = 1;
+	}
+	return recovered;
+}
+
 int opal_machine_check(struct pt_regs *regs)
 {
-	struct opal_machine_check_event *opal_evt = get_paca()->opal_mc_evt;
-	struct opal_machine_check_event evt;
-	const char *level, *sevstr, *subtype;
-	static const char *opal_mc_ue_types[] = {
-		"Indeterminate",
-		"Instruction fetch",
-		"Page table walk ifetch",
-		"Load/Store",
-		"Page table walk Load/Store",
-	};
-	static const char *opal_mc_slb_types[] = {
-		"Indeterminate",
-		"Parity",
-		"Multihit",
-	};
-	static const char *opal_mc_erat_types[] = {
-		"Indeterminate",
-		"Parity",
-		"Multihit",
-	};
-	static const char *opal_mc_tlb_types[] = {
-		"Indeterminate",
-		"Parity",
-		"Multihit",
-	};
+	struct machine_check_event evt;
 
-	/* Copy the event structure and release the original */
-	evt = *opal_evt;
-	opal_evt->in_use = 0;
+	if (!get_mce_event(&evt, MCE_EVENT_RELEASE))
+		return 0;
 
 	/* Print things out */
-	if (evt.version != OpalMCE_V1) {
+	if (evt.version != MCE_V1) {
 		pr_err("Machine Check Exception, Unknown event version %d !\n",
 		       evt.version);
 		return 0;
 	}
-	switch(evt.severity) {
-	case OpalMCE_SEV_NO_ERROR:
-		level = KERN_INFO;
-		sevstr = "Harmless";
-		break;
-	case OpalMCE_SEV_WARNING:
-		level = KERN_WARNING;
-		sevstr = "";
-		break;
-	case OpalMCE_SEV_ERROR_SYNC:
-		level = KERN_ERR;
-		sevstr = "Severe";
-		break;
-	case OpalMCE_SEV_FATAL:
-	default:
-		level = KERN_ERR;
-		sevstr = "Fatal";
-		break;
-	}
+	machine_check_print_event_info(&evt);
 
-	printk("%s%s Machine check interrupt [%s]\n", level, sevstr,
-	       evt.disposition == OpalMCE_DISPOSITION_RECOVERED ?
-	       "Recovered" : "[Not recovered");
-	printk("%s  Initiator: %s\n", level,
-	       evt.initiator == OpalMCE_INITIATOR_CPU ? "CPU" : "Unknown");
-	switch(evt.error_type) {
-	case OpalMCE_ERROR_TYPE_UE:
-		subtype = evt.u.ue_error.ue_error_type <
-			ARRAY_SIZE(opal_mc_ue_types) ?
-			opal_mc_ue_types[evt.u.ue_error.ue_error_type]
-			: "Unknown";
-		printk("%s  Error type: UE [%s]\n", level, subtype);
-		if (evt.u.ue_error.effective_address_provided)
-			printk("%s    Effective address: %016llx\n",
-			       level, evt.u.ue_error.effective_address);
-		if (evt.u.ue_error.physical_address_provided)
-			printk("%s      Physial address: %016llx\n",
-			       level, evt.u.ue_error.physical_address);
-		break;
-	case OpalMCE_ERROR_TYPE_SLB:
-		subtype = evt.u.slb_error.slb_error_type <
-			ARRAY_SIZE(opal_mc_slb_types) ?
-			opal_mc_slb_types[evt.u.slb_error.slb_error_type]
-			: "Unknown";
-		printk("%s  Error type: SLB [%s]\n", level, subtype);
-		if (evt.u.slb_error.effective_address_provided)
-			printk("%s    Effective address: %016llx\n",
-			       level, evt.u.slb_error.effective_address);
-		break;
-	case OpalMCE_ERROR_TYPE_ERAT:
-		subtype = evt.u.erat_error.erat_error_type <
-			ARRAY_SIZE(opal_mc_erat_types) ?
-			opal_mc_erat_types[evt.u.erat_error.erat_error_type]
-			: "Unknown";
-		printk("%s  Error type: ERAT [%s]\n", level, subtype);
-		if (evt.u.erat_error.effective_address_provided)
-			printk("%s    Effective address: %016llx\n",
-			       level, evt.u.erat_error.effective_address);
-		break;
-	case OpalMCE_ERROR_TYPE_TLB:
-		subtype = evt.u.tlb_error.tlb_error_type <
-			ARRAY_SIZE(opal_mc_tlb_types) ?
-			opal_mc_tlb_types[evt.u.tlb_error.tlb_error_type]
-			: "Unknown";
-		printk("%s  Error type: TLB [%s]\n", level, subtype);
-		if (evt.u.tlb_error.effective_address_provided)
-			printk("%s    Effective address: %016llx\n",
-			       level, evt.u.tlb_error.effective_address);
-		break;
-	default:
-	case OpalMCE_ERROR_TYPE_UNKNOWN:
-		printk("%s  Error type: Unknown\n", level);
-		break;
-	}
-	return evt.severity == OpalMCE_SEV_FATAL ? 0 : 1;
+	if (opal_recover_mce(regs, &evt))
+		return 1;
+	return 0;
+}
+
+static uint64_t find_recovery_address(uint64_t nip)
+{
+	int i;
+
+	for (i = 0; i < mc_recoverable_range_len; i++)
+		if ((nip >= mc_recoverable_range[i].start_addr) &&
+		    (nip < mc_recoverable_range[i].end_addr))
+		    return mc_recoverable_range[i].recover_addr;
+	return 0;
+}
+
+bool opal_mce_check_early_recovery(struct pt_regs *regs)
+{
+	uint64_t recover_addr = 0;
+
+	if (!opal.base || !opal.size)
+		goto out;
+
+	if ((regs->nip >= opal.base) &&
+			(regs->nip <= (opal.base + opal.size)))
+		recover_addr = find_recovery_address(regs->nip);
+
+	/*
+	 * Setup regs->nip to rfi into fixup address.
+	 */
+	if (recover_addr)
+		regs->nip = recover_addr;
+
+out:
+	return !!recover_addr;
 }
 
 static irqreturn_t opal_interrupt(int irq, void *data)

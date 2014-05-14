@@ -676,8 +676,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
 12:	mr	r6,r10
 	mr	r10,r0
 	mr	r7,r11
-	li	r11,(MSR_ME << 1) | 1	/* synthesize MSR_SF | MSR_ME */
-	rotldi	r11,r11,63
+	ld	r11,VCPU_INTR_MSR(r4)
 	b	5f
 11:	beq	5f
 	mfspr	r0,SPRN_DEC
@@ -896,8 +895,7 @@ do_ext_interrupt:
 	mtspr	SPRN_SRR0, r10
 	mtspr	SPRN_SRR1, r11
 	li	r10, BOOK3S_INTERRUPT_EXTERNAL
-	li	r11, (MSR_ME << 1) | 1	/* synthesize MSR_SF | MSR_ME */
-	rotldi	r11, r11, 63
+	ld	r11,VCPU_INTR_MSR(r9)
 2:	mr	r4, r9
 	mtspr	SPRN_LPCR, r8
 	b	fast_guest_return
@@ -1386,8 +1384,7 @@ kvmppc_hdsi:
 	mtspr	SPRN_SRR0, r10
 	mtspr	SPRN_SRR1, r11
 	li	r10, BOOK3S_INTERRUPT_DATA_STORAGE
-	li	r11, (MSR_ME << 1) | 1	/* synthesize MSR_SF | MSR_ME */
-	rotldi	r11, r11, 63
+	ld	r11,VCPU_INTR_MSR(r9)
 fast_interrupt_c_return:
 6:	ld	r7, VCPU_CTR(r9)
 	lwz	r8, VCPU_XER(r9)
@@ -1415,10 +1412,19 @@ fast_interrupt_c_return:
 	lwz	r8, 0(r10)
 	mtmsrd	r3
 
+	andi.	r0, r11, MSR_LE
+
 	/* Store the result */
 	stw	r8, VCPU_LAST_INST(r9)
 
+	beq	after_inst_store
+
+	/* Swap and store the result */
+	addi	r4, r9, VCPU_LAST_INST
+	stwbrx	r8, 0, r4
+
 	/* Unset guest mode. */
+after_inst_store:
 	li	r0, KVM_GUEST_MODE_HOST_HV
 	stb	r0, HSTATE_IN_GUEST(r13)
 	b	guest_exit_cont
@@ -1456,8 +1462,7 @@ kvmppc_hisi:
 1:	mtspr	SPRN_SRR0, r10
 	mtspr	SPRN_SRR1, r11
 	li	r10, BOOK3S_INTERRUPT_INST_STORAGE
-	li	r11, (MSR_ME << 1) | 1	/* synthesize MSR_SF | MSR_ME */
-	rotldi	r11, r11, 63
+	ld	r11,VCPU_INTR_MSR(r9)
 	b	fast_interrupt_c_return
 
 3:	ld	r6, VCPU_KVM(r9)	/* not relocated, use VRMA */
@@ -1783,8 +1788,7 @@ machine_check_realmode:
 	beq	mc_cont
 	/* If not, deliver a machine check.  SRR0/1 are already set */
 	li	r10, BOOK3S_INTERRUPT_MACHINE_CHECK
-	li	r11, (MSR_ME << 1) | 1	/* synthesize MSR_SF | MSR_ME */
-	rotldi	r11, r11, 63
+	ld	r11,VCPU_INTR_MSR(r9)
 	b	fast_interrupt_c_return
 
 /*

@@ -2752,7 +2752,7 @@ reuse:
 			set_page_dirty_balance(dirty_page, page_mkwrite);
 			/* file_update_time outside page_lock */
 			if (vma->vm_file)
-				file_update_time(vma->vm_file);
+				vma_file_update_time(vma);
 		}
 		put_page(dirty_page);
 		if (page_mkwrite) {
@@ -3357,10 +3357,15 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	else
 		VM_BUG_ON(!PageLocked(vmf.page));
 
+	page = vmf.page;
+
+	/* Mark the page as used on fault. */
+	if (PageReadaheadUnused(page))
+		ClearPageReadaheadUnused(page);
+
 	/*
 	 * Should we do an early C-O-W break?
 	 */
-	page = vmf.page;
 	if (flags & FAULT_FLAG_WRITE) {
 		if (!(vma->vm_flags & VM_SHARED)) {
 			page = cow_page;
@@ -3463,7 +3468,7 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 
 		/* file_update_time outside page_lock */
 		if (vma->vm_file && !page_mkwrite)
-			file_update_time(vma->vm_file);
+			vma_file_update_time(vma);
 	} else {
 		unlock_page(vmf.page);
 		if (anon)
