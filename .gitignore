@@ -92,3 +92,11 @@ extra_certificates
 signing_key.priv
 signing_key.x509
 x509.genkey
+
+#
+# Additional files to ignore
+#
+ubuntu/aufs/conf.str
+ubuntu/aufs/conf.str.tmp
+security/apparmor/net_names.h
+
